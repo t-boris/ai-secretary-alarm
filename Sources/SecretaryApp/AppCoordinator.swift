@@ -28,6 +28,7 @@ final class AppCoordinator {
 
     var googleSignedIn: Bool
     var launchAtLoginError: String?
+    var selectedSettingsTab = "reminders"
     @ObservationIgnored private(set) lazy var assistant = AssistantController(app: self)
 
     init() {
@@ -42,10 +43,7 @@ final class AppCoordinator {
         })
         travel = TravelUpdater(store: store, estimator: MapKitTravelEstimator(), location: location)
         sync = SyncCoordinator(store: store, calendar: calendar, geocoder: geocoder, hints: openAI)
-        let presenter = AlarmPresenter(speaker: Speaker(voiceID: { language in
-                                    let settings = store.state.settings
-                                    return language == .ru ? settings.alarmVoiceRussianID : settings.alarmVoiceEnglishID
-                                }), panels: panels)
+        let presenter = AlarmPresenter(speech: openAI, settings: { store.state.settings }, panels: panels)
         engine = ReminderEngine(store: store, preAlarm: sync, travel: travel, presenter: presenter)
         googleSignedIn = auth.isSignedIn
         presenter.isHabit = { [weak self] id in self?.store.state.event(id)?.isHabit == true }
@@ -72,6 +70,11 @@ final class AppCoordinator {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
                                                           queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.syncThenTick() }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil,
+                                                          queue: .main) { [weak self] _ in
+            let sleepingAt = Date()
+            Task { @MainActor in self?.stopProjectTimer(now: sleepingAt) }
         }
     }
 
@@ -124,7 +127,10 @@ final class AppCoordinator {
         if draft.kind != .calendarEvent {
             record.managesGoogleEvent = false
             record.end = draft.start.addingTimeInterval(24 * 3600)
-            store.mutate { $0.events.append(record) }
+            store.mutate { state in
+                state.events.append(record)
+                state.activityHistory.append(ActivityHistoryEntry(record: record))
+            }
             return record
         }
         let created: GoogleEvent
@@ -150,7 +156,10 @@ final class AppCoordinator {
                 }
             }
         }
-        store.mutate { $0.events.append(record) }
+        store.mutate { state in
+            state.events.append(record)
+            state.activityHistory.append(ActivityHistoryEntry(record: record))
+        }
         return record
     }
 
@@ -159,7 +168,10 @@ final class AppCoordinator {
                                  start: request.dueAt, end: request.dueAt.addingTimeInterval(24 * 3600),
                                  timeZoneID: TimeZone.current.identifier, locationType: .noLocation,
                                  eventType: .other, language: request.language, createdAt: Date())
-        store.mutate { $0.events.append(record) }
+        store.mutate { state in
+            state.events.append(record)
+            state.activityHistory.append(ActivityHistoryEntry(record: record))
+        }
         return record
     }
 
@@ -205,8 +217,39 @@ final class AppCoordinator {
         record.timeZoneID = zone.identifier
         record.recurrence = source.recurrence.flatMap { Recurrence.parse(googleLines: $0, timeZone: zone) }
         record.locationText = source.location ?? ""
-        store.mutate { $0.events.append(record) }
+        store.mutate { state in
+            state.events.append(record)
+            state.activityHistory.append(ActivityHistoryEntry(record: record))
+        }
         return (record, true)
+    }
+
+    // MARK: - Project time
+
+    var activeProjectTimer: ProjectTimerSession? {
+        store.state.projectTimers.last { $0.endedAt == nil }
+    }
+
+    @discardableResult
+    func startProjectTimer(_ project: String, now: Date = Date()) -> ProjectTimerSession {
+        let session = ProjectTimerSession(project: project.trimmingCharacters(in: .whitespacesAndNewlines), startedAt: now)
+        store.mutate { state in
+            for index in state.projectTimers.indices where state.projectTimers[index].endedAt == nil {
+                state.projectTimers[index].endedAt = now
+            }
+            state.projectTimers.append(session)
+        }
+        return session
+    }
+
+    @discardableResult
+    func stopProjectTimer(now: Date = Date()) -> ProjectTimerSession? {
+        guard let running = activeProjectTimer else { return nil }
+        store.mutate { state in
+            guard let index = state.projectTimers.firstIndex(where: { $0.id == running.id }) else { return }
+            state.projectTimers[index].endedAt = now
+        }
+        return store.state.projectTimers.first { $0.id == running.id }
     }
 
     func delete(_ record: EventRecord) async -> String? {

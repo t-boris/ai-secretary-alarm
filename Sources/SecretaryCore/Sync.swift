@@ -61,6 +61,9 @@ public enum SyncReconciler {
         if !removed.isEmpty {
             state.snoozedAlarms.removeAll { removed.contains($0.content.eventID) }
         }
+        for record in state.events where !state.activityHistory.contains(where: { $0.eventID == record.id }) {
+            state.activityHistory.append(ActivityHistoryEntry(record: record))
+        }
         return effects
     }
 

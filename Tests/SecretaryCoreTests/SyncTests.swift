@@ -64,6 +64,16 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(state.events.map(\.googleEventID), ["g1"])
     }
 
+    func testCalendarDeletionKeepsTaskHistory() {
+        var state = AppState()
+        let old = record("g1")
+        state.events = [old]
+        state.activityHistory = [ActivityHistoryEntry(record: old)]
+        _ = SyncReconciler.apply([], to: &state, fullResync: true)
+        XCTAssertTrue(state.events.isEmpty)
+        XCTAssertEqual(state.activityHistory.map(\.eventID), [old.id])
+    }
+
     func testFullResyncKeepsLocalReminder() {
         var state = AppState()
         let due = d(2026, 10, 5, 18)

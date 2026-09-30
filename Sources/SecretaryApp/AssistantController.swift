@@ -27,6 +27,7 @@ final class AssistantController {
     @ObservationIgnored private var session: DialogueSession?
     @ObservationIgnored private var lastSummaryLines: [String] = []
     @ObservationIgnored private var autoCreateOnSummary = false
+    @ObservationIgnored private var pendingProjectTimer = false
 
     init(app: AppCoordinator) { self.app = app }
 
@@ -84,6 +85,61 @@ final class AssistantController {
     func submit(_ text: String, autoCreate: Bool = false) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if pendingProjectTimer {
+            pendingProjectTimer = false
+            log.append(ChatTurn(.user, trimmed))
+            let ru = language == .ru
+            if ["отмена", "cancel"].contains(trimmed.lowercased()) {
+                await finish(ru ? "Таймер отменён." : "Timer cancelled.", language: ru ? .ru : .en)
+            } else {
+                app.startProjectTimer(trimmed)
+                await finish(ru ? "Запустил учёт времени для проекта «\(trimmed)»."
+                                : "Started tracking time for \"\(trimmed)\".", language: ru ? .ru : .en)
+            }
+            return
+        }
+        if session == nil || isTerminal, let command = TimerCommandParser.parse(trimmed) {
+            session = nil
+            log = [ChatTurn(.user, trimmed)]
+            banner = nil
+            let ru = trimmed.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil
+            let language: SpeechLanguage = ru ? .ru : .en
+            let message: String
+            switch command {
+            case let .start(project):
+                app.startProjectTimer(project)
+                message = ru ? "Запустил учёт времени для проекта «\(project)»."
+                             : "Started tracking time for \"\(project)\"."
+            case .startNeedsProject:
+                pendingProjectTimer = true
+                let question = ru ? "Для какого проекта запустить таймер?" : "Which project should I track?"
+                log.append(ChatTurn(.assistant, question))
+                phase = .question(question)
+                return
+            case .stop:
+                if let stopped = app.stopProjectTimer() {
+                    let duration = ActivityStatistics.durationText(stopped.elapsed(at: Date()), language: language)
+                    message = ru ? "Остановил таймер «\(stopped.project)»: \(duration)."
+                                 : "Stopped \"\(stopped.project)\": \(duration)."
+                } else {
+                    message = ru ? "Сейчас нет запущенного таймера." : "No project timer is running."
+                }
+            case let .summary(project):
+                let totals = ActivityStatistics.projectTotals(app.store.state.projectTimers, now: Date())
+                let selected = project.map { name in
+                    totals.filter { $0.project.localizedCaseInsensitiveContains(name) }
+                } ?? totals
+                if selected.isEmpty {
+                    message = ru ? "Пока нет учтённого времени для этого проекта." : "No tracked time yet."
+                } else {
+                    message = selected.prefix(5).map {
+                        "\($0.project): \(ActivityStatistics.durationText($0.seconds, language: language))"
+                    }.joined(separator: " · ")
+                }
+            }
+            await finish(message, language: language)
+            return
+        }
         if session == nil || isTerminal, let quick = QuickReminderParser.parse(trimmed, now: Date()) {
             session = nil
             log = [ChatTurn(.user, trimmed)]
@@ -163,6 +219,7 @@ final class AssistantController {
         log = []
         banner = nil
         autoCreateOnSummary = false
+        pendingProjectTimer = false
         phase = .idle
     }
 

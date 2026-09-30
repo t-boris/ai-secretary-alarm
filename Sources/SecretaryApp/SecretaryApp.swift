@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         app.start()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        app.stopProjectTimer()
+    }
 }
 
 @main

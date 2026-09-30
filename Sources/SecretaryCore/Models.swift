@@ -109,6 +109,29 @@ public enum SpeechLanguage: String, Codable, Sendable {
     case ru, en
 }
 
+public enum AlarmCloudVoice: String, Codable, Sendable, CaseIterable {
+    case cedar, marin, onyx, coral, nova, ash, alloy, ballad, echo, fable, sage, shimmer, verse
+}
+
+public enum RussianSpeechStyle: String, Codable, Sendable, CaseIterable {
+    case gentleJapanese
+    case natural
+}
+
+public enum AlarmSpeechDirection {
+    public static func instructions(language: SpeechLanguage, russianStyle: RussianSpeechStyle) -> String {
+        if language == .ru {
+            switch russianStyle {
+            case .gentleJapanese:
+                return "Speak entirely in Russian with a light but clearly audible Japanese accent and melodic Japanese intonation, like a friendly Japanese speaker who speaks Russian fluently. Keep every Russian word intelligible. Sound warm and playful, never robotic or exaggerated. Do not switch languages or add Japanese words."
+            case .natural:
+                return "Speak entirely in clear Russian, with a warm, calm, natural voice. Sound like a friendly person, never robotic."
+            }
+        }
+        return "Speak in clear English with a warm, calm, natural voice. Sound like a friendly person, never robotic."
+    }
+}
+
 /// A local alarm is independent of Google Calendar; a calendar event may also have alarms.
 public enum RequestKind: String, Codable, Sendable {
     case reminder
@@ -204,8 +227,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var alarmSoundsByType: [EventType: String]
     public var transcriptionModel: String
     public var chatModel: String
-    public var alarmVoiceEnglishID: String?
-    public var alarmVoiceRussianID: String?
+    public var alarmCloudVoice: AlarmCloudVoice
+    public var alarmRussianStyle: RussianSpeechStyle
+    public var alarmSpeechEnabled: Bool
     public var launchAtLogin: Bool
 
     /// Defaults from DEC-022 and DEC-027.
@@ -213,7 +237,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
                 prepMinutesByType: [EventType: Int] = EventType.defaultPrepMinutes,
                 alarmSoundsByType: [EventType: String] = [:],
                 transcriptionModel: String = "gpt-4o-transcribe", chatModel: String = "gpt-4.1",
-                alarmVoiceEnglishID: String? = nil, alarmVoiceRussianID: String? = nil,
+                alarmCloudVoice: AlarmCloudVoice = .cedar,
+                alarmRussianStyle: RussianSpeechStyle = .gentleJapanese,
+                alarmSpeechEnabled: Bool = true,
                 launchAtLogin: Bool = true) {
         self.homeLeadMinutes = homeLeadMinutes
         self.fallbackBufferMinutes = fallbackBufferMinutes
@@ -222,15 +248,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.alarmSoundsByType = alarmSoundsByType
         self.transcriptionModel = transcriptionModel
         self.chatModel = chatModel
-        self.alarmVoiceEnglishID = alarmVoiceEnglishID
-        self.alarmVoiceRussianID = alarmVoiceRussianID
+        self.alarmCloudVoice = alarmCloudVoice
+        self.alarmRussianStyle = alarmRussianStyle
+        self.alarmSpeechEnabled = alarmSpeechEnabled
         self.launchAtLogin = launchAtLogin
     }
 
     private enum CodingKeys: String, CodingKey {
         case homeLeadMinutes, fallbackBufferMinutes, transportMode, prepMinutesByType, alarmSoundsByType,
              transcriptionModel, chatModel,
-             alarmVoiceEnglishID, alarmVoiceRussianID,
+             alarmCloudVoice, alarmRussianStyle, alarmSpeechEnabled,
              launchAtLogin
     }
 
@@ -244,8 +271,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         alarmSoundsByType = try c.decodeIfPresent([EventType: String].self, forKey: .alarmSoundsByType) ?? [:]
         transcriptionModel = try c.decodeIfPresent(String.self, forKey: .transcriptionModel) ?? d.transcriptionModel
         chatModel = try c.decodeIfPresent(String.self, forKey: .chatModel) ?? d.chatModel
-        alarmVoiceEnglishID = try c.decodeIfPresent(String.self, forKey: .alarmVoiceEnglishID)
-        alarmVoiceRussianID = try c.decodeIfPresent(String.self, forKey: .alarmVoiceRussianID)
+        alarmCloudVoice = try c.decodeIfPresent(AlarmCloudVoice.self, forKey: .alarmCloudVoice) ?? d.alarmCloudVoice
+        alarmRussianStyle = try c.decodeIfPresent(RussianSpeechStyle.self, forKey: .alarmRussianStyle) ?? d.alarmRussianStyle
+        alarmSpeechEnabled = try c.decodeIfPresent(Bool.self, forKey: .alarmSpeechEnabled) ?? d.alarmSpeechEnabled
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
     }
 

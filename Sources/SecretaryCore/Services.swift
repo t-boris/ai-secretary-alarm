@@ -99,7 +99,7 @@ public struct SnoozedAlarm: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// Plays sound once, speaks locally, then shows the persistent panel (DEC-008, DEC-016, DEC-025).
+/// Presents alarm music, optional speech, and the persistent panel.
 @MainActor
 public protocol AlarmPresenting: AnyObject {
     func present(_ alarm: AlarmContent) async

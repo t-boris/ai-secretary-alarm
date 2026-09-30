@@ -1,6 +1,6 @@
 import Foundation
 
-/// Texts assembled from local data only, so alarms work offline (DEC-016).
+/// Alarm text assembled locally, so the panel and music still work offline.
 public enum SpokenText {
     static func time(_ date: Date, zone: TimeZone, language: SpeechLanguage) -> String {
         let f = DateFormatter()

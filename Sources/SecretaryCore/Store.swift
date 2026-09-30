@@ -13,12 +13,15 @@ public struct AppState: Codable, Equatable, Sendable {
     /// Each completed daily check-in, keyed by its planned alarm key.
     public var completedHabits: [String: Date] = [:]
     public var snoozedAlarms: [SnoozedAlarm] = []
+    public var activityHistory: [ActivityHistoryEntry] = []
+    public var projectTimers: [ProjectTimerSession] = []
     public var syncToken: String?
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case events, places, settings, handledReminders, handledRefreshes, completedHabits, snoozedAlarms, syncToken
+        case events, places, settings, handledReminders, handledRefreshes, completedHabits, snoozedAlarms,
+             activityHistory, projectTimers, syncToken
     }
 
     /// Tolerant decoding: fields added in later versions fall back to defaults instead of failing the whole load.
@@ -31,6 +34,9 @@ public struct AppState: Codable, Equatable, Sendable {
         handledRefreshes = try c.decodeIfPresent([String: Date].self, forKey: .handledRefreshes) ?? [:]
         completedHabits = try c.decodeIfPresent([String: Date].self, forKey: .completedHabits) ?? [:]
         snoozedAlarms = try c.decodeIfPresent([SnoozedAlarm].self, forKey: .snoozedAlarms) ?? []
+        activityHistory = try c.decodeIfPresent([ActivityHistoryEntry].self, forKey: .activityHistory)
+            ?? events.map(ActivityHistoryEntry.init(record:))
+        projectTimers = try c.decodeIfPresent([ProjectTimerSession].self, forKey: .projectTimers) ?? []
         syncToken = try c.decodeIfPresent(String.self, forKey: .syncToken)
     }
 
@@ -47,6 +53,7 @@ public struct AppState: Codable, Equatable, Sendable {
         let cutoff = now.addingTimeInterval(-2 * 86_400)
         handledReminders = handledReminders.filter { $0.value > cutoff }
         handledRefreshes = handledRefreshes.filter { $0.value > cutoff }
+        // History and project sessions are separate from the active event list.
         events.removeAll { $0.recurrence == nil && $0.end < cutoff }
     }
 }

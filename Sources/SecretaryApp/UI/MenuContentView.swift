@@ -45,6 +45,18 @@ struct MenuContentView: View {
             }
 
             requestStatus
+            if let active = app.activeProjectTimer {
+                TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                    HStack {
+                        Label("\(active.project) · \(ActivityStatistics.durationText(active.elapsed(at: timeline.date)))",
+                              systemImage: "timer")
+                            .font(.caption)
+                        Spacer()
+                        Button("Stop") { app.stopProjectTimer() }
+                            .controlSize(.small)
+                    }
+                }
+            }
 
             if let loadError = app.store.loadError {
                 Text(loadError).font(.caption).foregroundStyle(.red)
@@ -224,6 +236,11 @@ struct MenuContentView: View {
     private var footer: some View {
         HStack {
             Button("Assistant") { openAssistant() }
+            Button("Statistics") {
+                app.selectedSettingsTab = "statistics"
+                openSettings()
+                DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
+            }
             Button("Settings…") {
                 openSettings()
                 DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }

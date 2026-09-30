@@ -1,14 +1,17 @@
-import AVFoundation
+import AppKit
 import SecretaryCore
 import SwiftUI
 
 /// Settings: reminders (REQ-005), places (DEC-011, DEC-023), accounts and secrets (DEC-012, DEC-024).
 struct SettingsView: View {
+    @Environment(AppCoordinator.self) private var app
+
     var body: some View {
-        TabView {
-            RemindersTab().tabItem { Label("Reminders", systemImage: "alarm") }
-            PlacesTab().tabItem { Label("Places", systemImage: "mappin.and.ellipse") }
-            AccountsTab().tabItem { Label("Accounts", systemImage: "key") }
+        TabView(selection: Binding(get: { app.selectedSettingsTab }, set: { app.selectedSettingsTab = $0 })) {
+            RemindersTab().tabItem { Label("Reminders", systemImage: "alarm") }.tag("reminders")
+            StatisticsView().tabItem { Label("Statistics", systemImage: "chart.bar") }.tag("statistics")
+            PlacesTab().tabItem { Label("Places", systemImage: "mappin.and.ellipse") }.tag("places")
+            AccountsTab().tabItem { Label("Accounts", systemImage: "key") }.tag("accounts")
         }
         .frame(minWidth: 700, idealWidth: 760, minHeight: 560, idealHeight: 660)
     }
@@ -16,6 +19,9 @@ struct SettingsView: View {
 
 private struct RemindersTab: View {
     @Environment(AppCoordinator.self) private var app
+    @State private var previewingVoice = false
+    @State private var previewError: String?
+    @State private var previewSound: NSSound?
 
     private func binding<T>(_ keyPath: WritableKeyPath<AppSettings, T>) -> Binding<T> {
         Binding(get: { app.store.state.settings[keyPath: keyPath] },
@@ -55,9 +61,56 @@ private struct RemindersTab: View {
                 }
             }
             Section("Alarm voice") {
-                voicePicker("English", language: .en, keyPath: \.alarmVoiceEnglishID)
-                voicePicker("Russian", language: .ru, keyPath: \.alarmVoiceRussianID)
-                Text("Only scheduled alarms play sound and speak. The clearest installed voice is selected automatically.")
+                Toggle("Speak at alarms", isOn: binding(\.alarmSpeechEnabled))
+                Picker("Voice", selection: binding(\.alarmCloudVoice)) {
+                    ForEach(AlarmCloudVoice.allCases, id: \.self) { voice in
+                        Text(voice.rawValue.capitalized).tag(voice)
+                    }
+                }
+                .pickerStyle(.menu)
+                Picker("Russian delivery", selection: binding(\.alarmRussianStyle)) {
+                    Text("Gentle Japanese intonation").tag(RussianSpeechStyle.gentleJapanese)
+                    Text("Natural Russian").tag(RussianSpeechStyle.natural)
+                }
+                .pickerStyle(.menu)
+                HStack {
+                    Button(previewingVoice ? "Generating preview…" : "Preview Russian voice") {
+                        previewingVoice = true
+                        previewError = nil
+                        Task {
+                            do {
+                                let settings = app.store.state.settings
+                                let data = try await app.openAI.speechAudio(
+                                    text: "Напоминание: пора сделать небольшой перерыв и выпить воды.",
+                                    language: .ru, voice: settings.alarmCloudVoice,
+                                    russianStyle: settings.alarmRussianStyle)
+                                guard let sound = NSSound(data: data) else {
+                                    throw AIError.badResponse("Could not play the generated audio")
+                                }
+                                previewSound?.stop()
+                                previewSound = sound
+                                _ = sound.play()
+                            } catch let error as AIError {
+                                switch error {
+                                case .missingAPIKey: previewError = "Add your OpenAI API key in Accounts to preview voices."
+                                case .invalidAPIKey: previewError = "The OpenAI API key is invalid. Check it in Accounts."
+                                case .offline: previewError = "Connect to the internet to preview this voice."
+                                case let .badResponse(detail), let .service(detail):
+                                    previewError = "Could not preview this voice: \(detail)"
+                                }
+                            } catch {
+                                previewError = "Could not preview this voice: \(error.localizedDescription)"
+                            }
+                            previewingVoice = false
+                        }
+                    }
+                    .disabled(previewingVoice || !app.store.state.settings.alarmSpeechEnabled)
+                    if previewSound != nil {
+                        Button("Stop") { previewSound?.stop(); previewSound = nil }
+                    }
+                }
+                if let previewError { Text(previewError).font(.caption).foregroundStyle(.orange) }
+                Text("AI-generated voice. Alarm text is sent to OpenAI for speech using your API key; music and the alarm panel still work offline. No system voice is used as a fallback.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Alarm music by event type") {
@@ -73,19 +126,6 @@ private struct RemindersTab: View {
         .formStyle(.grouped)
     }
 
-    private func voicePicker(_ label: String, language: SpeechLanguage,
-                             keyPath: WritableKeyPath<AppSettings, String?>) -> some View {
-        let voices = AlarmVoiceCatalog.voices(for: language)
-        return Picker(label, selection: Binding(
-            get: { app.store.state.settings[keyPath: keyPath] ?? "" },
-            set: { id in app.store.mutate { $0.settings[keyPath: keyPath] = id.isEmpty ? nil : id } })) {
-            Text("Automatic (best available)").tag("")
-            ForEach(voices, id: \.identifier) { voice in
-                Text(AlarmVoiceCatalog.label(voice)).tag(voice.identifier)
-            }
-        }
-        .pickerStyle(.menu)
-    }
 }
 
 private struct PlacesTab: View {

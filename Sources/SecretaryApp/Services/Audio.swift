@@ -42,93 +42,11 @@ final class VoiceRecorder {
     var isRecording: Bool { recorder?.isRecording ?? false }
 }
 
-@MainActor
-enum AlarmVoiceCatalog {
-    static func voices(for language: SpeechLanguage) -> [AVSpeechSynthesisVoice] {
-        let prefix = language == .ru ? "ru-" : "en-"
-        return AVSpeechSynthesisVoice.speechVoices()
-            .filter { voice in
-                voice.language.hasPrefix(prefix)
-                    && (voice.quality.rawValue > 1
-                        || (voice.identifier.hasPrefix("com.apple.voice.")
-                            && !voice.identifier.contains("super-compact")))
-            }
-            .sorted { left, right in
-                if left.quality.rawValue != right.quality.rawValue {
-                    return left.quality.rawValue > right.quality.rawValue
-                }
-                return left.name < right.name
-            }
-    }
-
-    static func preferred(for language: SpeechLanguage) -> AVSpeechSynthesisVoice? {
-        voices(for: language).first ?? AVSpeechSynthesisVoice(language: language == .ru ? "ru-RU" : "en-US")
-    }
-
-    static func label(_ voice: AVSpeechSynthesisVoice) -> String {
-        if voice.identifier.contains("gryphon-neural_Yelena") { return "Yelena · natural · Russian" }
-        if voice.identifier.contains("siri.natural.Nora") { return "Nora · natural · English" }
-        return "\(voice.name) · \(voice.language)"
-    }
-}
-
-/// Local macOS speech synthesis; no network (DEC-016).
-@MainActor
-final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
-    private let synthesizer = AVSpeechSynthesizer()
-    private let voiceID: @MainActor (SpeechLanguage) -> String?
-    private var finished: CheckedContinuation<Void, Never>?
-    private var generation = 0
-
-    init(voiceID: @escaping @MainActor (SpeechLanguage) -> String? = { _ in nil }) {
-        self.voiceID = voiceID
-        super.init()
-        synthesizer.delegate = self
-    }
-
-    func speak(_ text: String, language: SpeechLanguage) async {
-        stop()
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = voiceID(language).flatMap(AVSpeechSynthesisVoice.init(identifier:))
-            ?? AlarmVoiceCatalog.preferred(for: language)
-        // Watchdog: if the delegate callback never arrives, stop waiting after a generous estimate.
-        let limit = Double(text.count) * 0.12 + 10
-        generation += 1
-        let current = generation
-        await withCheckedContinuation { cont in
-            finished = cont
-            synthesizer.speak(utterance)
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
-                guard let self, self.generation == current else { return }
-                self.resume()
-            }
-        }
-    }
-
-    func stop() {
-        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
-        resume()
-    }
-
-    private func resume() {
-        finished?.resume()
-        finished = nil
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.resume() }
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.resume() }
-    }
-}
-
-/// Alarm playback: sound once, then speech once, then a persistent panel (REQ-004, DEC-008, DEC-025).
+/// Alarm playback: show controls and play music immediately, then play the chosen AI voice if available.
 @MainActor
 final class AlarmPresenter: AlarmPresenting {
-    private let speaker: Speaker
+    private let speech: OpenAIClient
+    private let settings: @MainActor () -> AppSettings
     private let panels: AlarmPanelController
     var onSnooze: ((AlarmContent, Int) -> Void)?
     var onHabitDone: ((AlarmContent) -> Void)?
@@ -136,9 +54,12 @@ final class AlarmPresenter: AlarmPresenting {
     private var activeTokens = Set<UUID>()
     private var cancelledTokens = Set<UUID>()
     private var sounds: [UUID: NSSound] = [:]
+    private var speechRequests: [UUID: Task<Data?, Never>] = [:]
+    private var audioCache: [String: Data] = [:]
 
-    init(speaker: Speaker, panels: AlarmPanelController) {
-        self.speaker = speaker
+    init(speech: OpenAIClient, settings: @escaping @MainActor () -> AppSettings, panels: AlarmPanelController) {
+        self.speech = speech
+        self.settings = settings
         self.panels = panels
     }
 
@@ -149,6 +70,17 @@ final class AlarmPresenter: AlarmPresenting {
             activeTokens.remove(token)
             cancelledTokens.remove(token)
             sounds.removeValue(forKey: token)
+            speechRequests.removeValue(forKey: token)?.cancel()
+        }
+        let configured = settings()
+        let cacheKey = "\(configured.alarmCloudVoice.rawValue)|\(configured.alarmRussianStyle.rawValue)|\(alarm.language.rawValue)|\(alarm.spokenText)"
+        if configured.alarmSpeechEnabled && audioCache[cacheKey] == nil {
+            let speech = self.speech
+            speechRequests[token] = Task {
+                try? await speech.speechAudio(text: alarm.spokenText, language: alarm.language,
+                                              voice: configured.alarmCloudVoice,
+                                              russianStyle: configured.alarmRussianStyle)
+            }
         }
         panels.show(alarm, snooze: { [weak self] minutes in
             self?.stopPlayback(token)
@@ -167,13 +99,29 @@ final class AlarmPresenter: AlarmPresenting {
             if sound.isPlaying { sound.stop() }
         }
         guard !cancelledTokens.contains(token) else { return }
-        await speaker.speak(alarm.spokenText, language: alarm.language)
+        guard configured.alarmSpeechEnabled else { return }
+        let audio: Data?
+        if let cached = audioCache[cacheKey] {
+            audio = cached
+        } else if let request = speechRequests[token] {
+            audio = await withDeadline(15, fallback: Optional<Data>.none) { await request.value }
+        } else {
+            audio = nil
+        }
+        guard !cancelledTokens.contains(token), let audio, let spoken = NSSound(data: audio) else { return }
+        if audioCache.count >= 8 { audioCache.removeAll() }
+        audioCache[cacheKey] = audio
+        sounds[token] = spoken
+        _ = spoken.play()
+        let seconds = min(90, max(0.8, spoken.duration))
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        if spoken.isPlaying { spoken.stop() }
     }
 
     private func stopPlayback(_ token: UUID) {
         guard activeTokens.contains(token) else { return }
         cancelledTokens.insert(token)
         sounds[token]?.stop()
-        speaker.stop()
+        speechRequests[token]?.cancel()
     }
 }

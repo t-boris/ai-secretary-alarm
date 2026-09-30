@@ -63,6 +63,29 @@ struct OpenAIClient: RequestParsing, HintGenerating {
         return text
     }
 
+    /// Generates AI speech for an alarm or an explicit Settings preview. Never falls back to a system voice.
+    func speechAudio(text: String, language: SpeechLanguage, voice: AlarmCloudVoice,
+                     russianStyle: RussianSpeechStyle) async throws -> Data {
+        let body: [String: Any] = [
+            "model": "gpt-4o-mini-tts",
+            "voice": voice.rawValue,
+            "input": String(text.prefix(4096)),
+            "instructions": AlarmSpeechDirection.instructions(language: language, russianStyle: russianStyle),
+            "response_format": "wav",
+        ]
+        var request = URLRequest(url: Self.base.appendingPathComponent("audio/speech"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(try apiKey())", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 25
+        let data = try await send(request)
+        guard data.count > 44, data.starts(with: Data("RIFF".utf8)) else {
+            throw AIError.badResponse("unreadable speech audio")
+        }
+        return data
+    }
+
     func parse(conversation: [ChatTurn], context: ParseContext) async throws -> ParsedRequest {
         let body = try ParserPrompt.requestBody(model: await models().chat, conversation: conversation, context: context)
         let data = try await send(chatRequest(body: body, key: try apiKey()))
