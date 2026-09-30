@@ -2,7 +2,9 @@
 type: feature
 id: ai-secretary-alarm
 title: AI Secretary Alarm
-status: exploring
+status: implementing
+epic: 9
+issues: ["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8"]
 owner: Boris Tsekinovsky
 created: 2026-09-30
 provenance: Created from the new-project intake
@@ -47,3 +49,18 @@ Creating reminders and calendar events by hand takes effort. Standard calendar n
 ## Scope
 
 IN (v1): voice input (possibly text too) in an always-available app; AI parsing of one-off and recurring events; a clarifying dialogue for missing details (location, reminder lead time); creating events in the user's Google Calendar; alarm-like reminders with sound and speech; a travel-time-aware 'leave now' reminder for off-site events. OUT (v1, assumed): multiple users, non-Google calendars, inviting or negotiating with attendees, deep meeting-preparation content.
+
+## GitHub issues
+
+[Epic #9](https://github.com/t-boris/ai-secretary-alarm/issues/9) tracks the v1 implementation. Each task in the [implementation plan](implementation/plan.md) already has its own issue:
+
+| Task | Issue | Coverage |
+| --- | --- | --- |
+| I-1 | [#1](https://github.com/t-boris/ai-secretary-alarm/issues/1) | Menu bar app, settings, Keychain, local storage |
+| I-2 | [#2](https://github.com/t-boris/ai-secretary-alarm/issues/2) | Voice capture, transcription, AI parsing |
+| I-3 | [#3](https://github.com/t-boris/ai-secretary-alarm/issues/3) | Clarifying dialogue and confirmation |
+| I-4 | [#4](https://github.com/t-boris/ai-secretary-alarm/issues/4) | Saved places and geocoding |
+| I-5 | [#5](https://github.com/t-boris/ai-secretary-alarm/issues/5) | Google OAuth, event creation, tagging |
+| I-6 | [#6](https://github.com/t-boris/ai-secretary-alarm/issues/6) | Calendar change sync |
+| I-7 | [#7](https://github.com/t-boris/ai-secretary-alarm/issues/7) | Reminder scheduling and alarm playback |
+| I-8 | [#8](https://github.com/t-boris/ai-secretary-alarm/issues/8) | Location-aware lead time and two-stage off-site alarms |
